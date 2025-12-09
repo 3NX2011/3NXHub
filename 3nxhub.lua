@@ -8,7 +8,8 @@ local localPlayer = Players.LocalPlayer
 
 local supportedGames = {
     [13924946576] = "Dingus",
-    [18687417158] = "Forsaken"
+    [18687417158] = "Forsaken",
+    [1537690962] = "Bee Swarm Simulator"
 }
 
 local currentGameId = game.PlaceId
@@ -168,14 +169,24 @@ local GENERATOR_COLOR = Color3.fromRGB(255, 165, 0)
 local trackedObjects = {}
 
 local function removeChamsForsaken(obj)
+    if obj:FindFirstChild("NX_Highlight") then
+        obj.NX_Highlight:Destroy()
+    end
+    
     for _, v in obj:GetDescendants() do
-        if v:IsA("BasePart") and v:FindFirstChild("NX_Highlight") then 
+        if v:FindFirstChild("NX_Highlight") then 
             v.NX_Highlight:Destroy() 
         end
     end
     
     if obj:FindFirstChild("NX_BillboardGui") then
         obj.NX_BillboardGui:Destroy()
+    end
+    
+    for _, v in obj:GetDescendants() do
+        if v:FindFirstChild("NX_BillboardGui") then
+            v.NX_BillboardGui:Destroy()
+        end
     end
 end
 
@@ -205,8 +216,9 @@ local function createBillboard(obj, text, color)
 end
 
 local function applyChamsForsaken(obj, color, text)
-    removeChamsForsaken(obj)
     if not chamsOn then return end
+    
+    removeChamsForsaken(obj)
     
     local highlight = Instance.new("Highlight")
     highlight.Name = "NX_Highlight"
@@ -324,36 +336,172 @@ local function findPlayers()
 end
 
 local function refreshForsaken()
-    if not chamsOn then
-        for obj, _ in pairs(trackedObjects) do
-            if obj and obj.Parent then
-                removeChamsForsaken(obj)
+    local currentlyTracked = {}
+    
+    if chamsOn then
+        for _, playerData in findPlayers() do
+            if playerData.char and playerData.char.Parent then
+                local color = playerData.isKiller and KILLER_COLOR or PLAYER_COLOR
+                applyChamsForsaken(playerData.char, color, nil)
+                currentlyTracked[playerData.char] = true
             end
         end
-        trackedObjects = {}
-        return
-    end
-    
-    for _, playerData in findPlayers() do
-        if playerData.char and playerData.char.Parent then
-            local color = playerData.isKiller and KILLER_COLOR or PLAYER_COLOR
-            applyChamsForsaken(playerData.char, color, nil)
-            trackedObjects[playerData.char] = true
+        
+        for _, item in findItems() do
+            if item.obj and item.obj.Parent then
+                applyChamsForsaken(item.obj, ITEM_COLOR, item.name)
+                currentlyTracked[item.obj] = true
+            end
+        end
+        
+        for _, gen in findGenerators() do
+            if gen and gen.Parent then
+                local progress = getGeneratorProgress(gen)
+                
+                local primaryPart = gen.PrimaryPart or gen:FindFirstChildWhichIsA("BasePart")
+                if primaryPart then
+                    local billboard = primaryPart:FindFirstChild("NX_BillboardGui")
+                    if billboard and billboard:FindFirstChildOfClass("TextLabel") then
+                        billboard:FindFirstChildOfClass("TextLabel").Text = progress
+                    else
+                        applyChamsForsaken(gen, GENERATOR_COLOR, progress)
+                    end
+                else
+                    applyChamsForsaken(gen, GENERATOR_COLOR, progress)
+                end
+                
+                currentlyTracked[gen] = true
+            end
         end
     end
     
-    for _, item in findItems() do
-        if item.obj and item.obj.Parent then
-            applyChamsForsaken(item.obj, ITEM_COLOR, item.name)
-            trackedObjects[item.obj] = true
+    for obj, _ in pairs(trackedObjects) do
+        if obj and obj.Parent and not currentlyTracked[obj] then
+            removeChamsForsaken(obj)
         end
     end
     
-    for _, gen in findGenerators() do
-        if gen and gen.Parent then
-            local progress = getGeneratorProgress(gen)
-            applyChamsForsaken(gen, GENERATOR_COLOR, progress)
-            trackedObjects[gen] = true
+    trackedObjects = currentlyTracked
+end
+
+--========================================
+--BEE SWARM SIMULATOR FUNCTIONS
+--========================================
+
+local BSS_SETTINGS = {
+    autoFarm = false,
+    autoDig = false,
+    autoDispenser = false,
+    collectTokens = false,
+    walkSpeed = 50
+}
+
+local selectedField = "Sunflower Field"
+
+local function teleportToBSS(cframe)
+    if localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        localPlayer.Character.HumanoidRootPart.CFrame = cframe
+    end
+end
+
+local function getFieldPosition(fieldName)
+    local fields = {
+        ["Sunflower Field"] = CFrame.new(-203, 4, 185),
+        ["Mushroom Field"] = CFrame.new(-93, 4, 116),
+        ["Dandelion Field"] = CFrame.new(-30, 4, 225),
+        ["Blue Flower Field"] = CFrame.new(113, 4, 88),
+        ["Clover Field"] = CFrame.new(174, 34, 189),
+        ["Strawberry Field"] = CFrame.new(-169, 20, -6),
+        ["Spider Field"] = CFrame.new(-57, 20, -5),
+        ["Bamboo Field"] = CFrame.new(93, 20, -25),
+        ["Pineapple Patch"] = CFrame.new(262, 68, -201),
+        ["Stump Field"] = CFrame.new(440, 96, -25),
+        ["Cactus Field"] = CFrame.new(-194, 68, -107),
+        ["Pumpkin Patch"] = CFrame.new(-194, 68, -182),
+        ["Pine Tree Forest"] = CFrame.new(-318, 68, -150),
+        ["Rose Field"] = CFrame.new(-322, 20, 124),
+        ["Mountain Top Field"] = CFrame.new(76, 176, -191)
+    }
+    return fields[fieldName]
+end
+
+local function collectNearbyTokens()
+    if not BSS_SETTINGS.collectTokens then return end
+    
+    local char = localPlayer.Character
+    if not char then return end
+    
+    local rootPart = char:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    for _, token in pairs(Workspace.Collectibles:GetChildren()) do
+        if token:IsA("Part") or token:IsA("MeshPart") then
+            local dist = (token.Position - rootPart.Position).Magnitude
+            if dist < 60 then
+                rootPart.CFrame = CFrame.new(token.Position)
+                task.wait(0.1)
+            end
+        end
+    end
+end
+
+local function autoFarmBSS()
+    while BSS_SETTINGS.autoFarm do
+        task.wait(0.5)
+        
+        local char = localPlayer.Character
+        if not char then continue end
+        
+        local rootPart = char:FindFirstChild("HumanoidRootPart")
+        if not rootPart then continue end
+        
+        local fieldPos = getFieldPosition(selectedField)
+        if fieldPos then
+            rootPart.CFrame = fieldPos
+        end
+        
+        if BSS_SETTINGS.autoDig then
+            local tool = char:FindFirstChildOfClass("Tool")
+            if tool then
+                tool:Activate()
+            end
+        end
+        
+        collectNearbyTokens()
+        
+        task.wait(30)
+        
+        teleportToBSS(CFrame.new(-9, 20, 26))
+        task.wait(2)
+    end
+end
+
+local function useDispensers()
+    while BSS_SETTINGS.autoDispenser do
+        task.wait(60)
+        
+        local dispensers = {
+            ["Red Dispenser"] = CFrame.new(-348, 69, 244),
+            ["Blue Dispenser"] = CFrame.new(292, 48, 100),
+            ["Glue Dispenser"] = CFrame.new(266, 68, -724),
+            ["Honey Dispenser"] = CFrame.new(286, 68, -723)
+        }
+        
+        for name, pos in pairs(dispensers) do
+            if BSS_SETTINGS.autoDispenser then
+                teleportToBSS(pos)
+                task.wait(1)
+            end
+        end
+    end
+end
+
+local function setWalkSpeed()
+    local char = localPlayer.Character
+    if char then
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.WalkSpeed = BSS_SETTINGS.walkSpeed
         end
     end
 end
@@ -480,7 +628,7 @@ if currentGameId == 13924946576 then
     end)
 elseif currentGameId == 18687417158 then
     task.spawn(function()
-        while task.wait(2) do
+        while task.wait(1) do
             if chamsOn then
                 refreshForsaken()
             end
@@ -545,6 +693,27 @@ elseif currentGameId == 18687417158 then
             end)
         end
     end
+elseif currentGameId == 1537690962 then
+    localPlayer.CharacterAdded:Connect(function()
+        task.wait(1)
+        setWalkSpeed()
+    end)
+    
+    task.spawn(function()
+        while task.wait(1) do
+            if BSS_SETTINGS.autoFarm then
+                autoFarmBSS()
+            end
+        end
+    end)
+    
+    task.spawn(function()
+        while task.wait(1) do
+            if BSS_SETTINGS.autoDispenser then
+                useDispensers()
+            end
+        end
+    end)
 end
 
 --========================================
@@ -586,6 +755,11 @@ InfoTab:CreateParagraph({
 InfoTab:CreateParagraph({
     Title = "Forsaken",
     Content = "Game ID: 18687417158 - Full support with Player/Killer/Item/Generator ESP"
+})
+
+InfoTab:CreateParagraph({
+    Title = "Bee Swarm Simulator",
+    Content = "Game ID: 1537690962 - Full support with Auto Farm, Auto Dig, Auto Dispenser, Token Collection"
 })
 
 --========================================
@@ -672,6 +846,111 @@ elseif currentGameId == 18687417158 then
     MainTab:CreateParagraph({
         Title = "About ESP",
         Content = "Players: GREEN | Killer: RED | Items (Bloxy Cola/Medkit): CYAN with labels | Generators: ORANGE with completion percentage. Auto-detects new spawns!"
+    })
+
+--========================================
+--BEE SWARM SIMULATOR UI
+--========================================
+
+elseif currentGameId == 1537690962 then
+    local MainTab = Window:CreateTab("Bee Swarm", 4483362458)
+    
+    local FarmSection = MainTab:CreateSection("Auto Farm")
+    
+    MainTab:CreateDropdown({
+        Name = "Select Field",
+        Options = {"Sunflower Field", "Mushroom Field", "Dandelion Field", "Blue Flower Field", "Clover Field", "Strawberry Field", "Spider Field", "Bamboo Field", "Pineapple Patch", "Stump Field", "Cactus Field", "Pumpkin Patch", "Pine Tree Forest", "Rose Field", "Mountain Top Field"},
+        CurrentOption = {"Sunflower Field"},
+        Flag = "FieldSelect",
+        Callback = function(Option)
+            selectedField = Option[1]
+        end
+    })
+    
+    MainTab:CreateToggle({
+        Name = "Auto Farm",
+        CurrentValue = false,
+        Flag = "AutoFarmToggle",
+        Callback = function(Value)
+            BSS_SETTINGS.autoFarm = Value
+        end
+    })
+    
+    MainTab:CreateToggle({
+        Name = "Auto Dig",
+        CurrentValue = false,
+        Flag = "AutoDigToggle",
+        Callback = function(Value)
+            BSS_SETTINGS.autoDig = Value
+        end
+    })
+    
+    MainTab:CreateParagraph({
+        Title = "About Auto Farm",
+        Content = "Automatically farms the selected field, collects pollen, and converts to honey. Auto Dig will automatically use your tool while farming."
+    })
+    
+    local CollectionSection = MainTab:CreateSection("Collection")
+    
+    MainTab:CreateToggle({
+        Name = "Collect Tokens",
+        CurrentValue = false,
+        Flag = "CollectTokensToggle",
+        Callback = function(Value)
+            BSS_SETTINGS.collectTokens = Value
+        end
+    })
+    
+    MainTab:CreateToggle({
+        Name = "Auto Dispenser",
+        CurrentValue = false,
+        Flag = "AutoDispenserToggle",
+        Callback = function(Value)
+            BSS_SETTINGS.autoDispenser = Value
+        end
+    })
+    
+    MainTab:CreateParagraph({
+        Title = "About Collection",
+        Content = "Collect Tokens: Automatically collects nearby bubbles, leaves, and tokens. Auto Dispenser: Visits all dispensers every 60 seconds."
+    })
+    
+    local MovementSection = MainTab:CreateSection("Movement")
+    
+    MainTab:CreateSlider({
+        Name = "Walk Speed",
+        Range = {16, 100},
+        Increment = 1,
+        CurrentValue = 50,
+        Flag = "WalkSpeedSlider",
+        Callback = function(Value)
+            BSS_SETTINGS.walkSpeed = Value
+            setWalkSpeed()
+        end
+    })
+    
+    MainTab:CreateParagraph({
+        Title = "About Walk Speed",
+        Content = "Increases your movement speed. Default is 16. Recommended: 50-70 for safety."
+    })
+    
+    local TeleportSection = MainTab:CreateSection("Teleports")
+    
+    MainTab:CreateButton({
+        Name = "Teleport to Hive",
+        Callback = function()
+            teleportToBSS(CFrame.new(-9, 20, 26))
+        end
+    })
+    
+    MainTab:CreateButton({
+        Name = "Teleport to Selected Field",
+        Callback = function()
+            local fieldPos = getFieldPosition(selectedField)
+            if fieldPos then
+                teleportToBSS(fieldPos)
+            end
+        end
     })
 
 --========================================
